@@ -37,6 +37,14 @@ QToolButton:disabled {
     border: 1px solid #444444;
 }
 
+/* --- NEW: Obvious Highlighting for the Selected Mode Button --- */
+/* This is the rule that makes the active mode button stand out. */
+QToolButton:checked {
+    background-color: #485052; /* A slightly lighter, cooler gray */
+    border: 2px solid #36a4c9; /* A bright, solid cyan border */
+}
+
+
 /* --- Welcome Widget Style --- */
 #WelcomeWidget {
     background-color: #1f1f1f; /* A slightly different shade of dark */
@@ -61,8 +69,7 @@ QToolButton:disabled {
     padding: 15px;
 }
 
-/* Add this to the end of your main.qss file */
-
+/* --- Info Widget Style --- */
 #InfoWidget {
     background-color: rgba(30, 30, 30, 230); /* Dark, very semi-transparent */
     color: #f0f0f0;
