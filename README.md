@@ -7,8 +7,7 @@ This is an open-source tool, built by a developer for developers. It's designed 
 
 ![Chart Navigation Demo](https://i.imgur.com/WUc6M7G.gif)
 
----
-**IMPORTANT - Base only works with parquet formatted as described below in Preparing Your Data**
+- IMPORTANT - Base only works with parquet formatted as described below in Preparing Your Data
 ---
 ## The Philosophy
 
@@ -18,8 +17,6 @@ This tool was built with a few core principles in mind:
 *   **Local & Private:** This is not a web app. It runs entirely on your machine. Your data, API keys (if you add them), and labels never leave your computer. There is no cloud backend, no telemetry, no nonsense.
 *   **Customizable:** Your chart, your rules. I exposed as many style settings as possible through a simple preferences dialog. Change colors, line styles, and layout—the tool will remember your choices.
 *   **Open & Hackable:** This isn't a black box. The code is organized to be understood and extended. If you want to add a new indicator, a different drawing tool, or connect it to a live data source, you can.
-
-## Key Features
 
 ## Key Features
 
