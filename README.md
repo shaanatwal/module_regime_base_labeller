@@ -5,10 +5,10 @@ I originally built this tool as a simple helper application for a personal machi
 This is an open-source tool, built by a developer for developers. It's designed to be tinkered with.
 
 
-![Chart Navigation Demo](https://user-images.githubusercontent.com/your-navigation-gif-link.gif)
+![Chart Navigation Demo](https://i.imgur.com/WUc6M7G.gif)
 
 ---
-== IMPORTANT - Base only works with parquet formatted as described below in Preparing Your Data ==
+**IMPORTANT - Base only works with parquet formatted as described below in Preparing Your Data**
 ---
 ## The Philosophy
 
@@ -25,7 +25,7 @@ This tool was built with a few core principles in mind:
 
 *   **Hardware-Accelerated Rendering:** Uses OpenGL VBOs to draw thousands of candles without breaking a sweat.
 *   **Tweak Every Detail:** A comprehensive preferences dialog lets you control the appearance of candles, wicks, volume bars, grid lines, and the background. See it in action:
-    ![Preferences Demo](https://user-images.githubusercontent.com/your-preferences-gif-link.gif)
+    ![Preferences Demo](https://i.imgur.com/mxCpkLJ.gif)
 *   **Your Data, Your Machine:** Loads data from local Parquet files. The only limit to the dataset size is your machine's RAM.
 *   **Intuitive Navigation:** Smooth panning (right-click drag) and cursor-centric zooming (mouse wheel).
 *   **Modern & Clean UI:** A thoughtfully designed dark theme that's easy on the eyes during long sessions.
