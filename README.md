@@ -8,7 +8,7 @@ This is an open-source tool, built by a developer for developers. It's designed 
 ![Chart Navigation Demo](https://user-images.githubusercontent.com/your-navigation-gif-link.gif)
 
 ---
-==IMPORTANT - Base only works with parquet formatted as described below in Preparing Your Data==
+== IMPORTANT - Base only works with parquet formatted as described below in Preparing Your Data ==
 ---
 ## The Philosophy
 
