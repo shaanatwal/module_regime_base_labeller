@@ -1,59 +1,62 @@
-/* Save this file as main.qss */
-
-/* --- General Window and Toolbar Style --- */
+/* === General Window & Toolbar === */
+/* Sets the base background for the entire application window. */
 QMainWindow {
-    background-color: #191919; /* Dark gray background */
+    background-color: #191919;
 }
 
 QToolBar {
-    background-color: #2b2b2b; /* Slightly lighter toolbar */
+    background-color: #2b2b2b; /* A slightly lighter gray for the toolbar area */
     border: none;
     padding: 2px;
-    spacing: 5px; /* Space between buttons */
+    spacing: 5px; /* Adds space between toolbar items */
 }
 
-/* --- Toolbar Button Style --- */
+/* === Toolbar Buttons === */
+/* Default styling for all toolbar buttons. */
 QToolButton {
-    color: #e0e0e0; /* Light gray text */
+    color: #e0e0e0; /* Light gray text/icon color */
     background-color: #3c3c3c;
     border: 1px solid #555555;
     border-radius: 4px;
-    padding: 5px 10px; /* Vertical and horizontal padding */
+    padding: 5px 10px;
 }
 
 QToolButton:hover {
-    background-color: #4f4f4f;
+    background-color: #4f4f4f; /* Lighten on hover for feedback */
 }
 
 QToolButton:pressed {
-    background-color: #5a5a5a;
+    background-color: #5a5a5a; /* Darken slightly when clicked */
     border: 1px solid #666666;
 }
 
-/* Style for disabled buttons to make them obviously inactive */
+/* Make disabled buttons look obviously inactive. */
 QToolButton:disabled {
     color: #777777;
     background-color: #333333;
     border: 1px solid #444444;
 }
 
-/* --- NEW: Obvious Highlighting for the Selected Mode Button --- */
-/* This is the rule that makes the active mode button stand out. */
+/* === Mode Toggling (Checked State) === */
+/* This is a key rule for UI feedback. It provides a persistent highlight
+   for the currently selected mode button (e.g., Cursor vs. Marker). */
 QToolButton:checked {
-    background-color: #485052; /* A slightly lighter, cooler gray */
-    border: 2px solid #36a4c9; /* A bright, solid cyan border */
+    background-color: #485052; /* A distinct, cool gray for the active state */
+    border: 2px solid #36a4c9; /* A bright, solid cyan border to make it pop */
 }
 
-
-/* --- Welcome Widget Style --- */
+/* === Welcome Widget === */
+/* Specific styling for the initial splash screen. */
 #WelcomeWidget {
-    background-color: #1f1f1f; /* A slightly different shade of dark */
+    background-color: #1f1f1f;
 }
 
+/* The container frame within the welcome widget. This allows us to
+   create a bordered box that doesn't stretch to the full window size. */
 #WelcomeContainer {
-    border: 1px dashed #444; /* Dashed border to frame the content */
+    border: 1px dashed #444;
     border-radius: 8px;
-    max-width: 500px; /* Keep the content from becoming too wide */
+    max-width: 500px; /* Constrains the width for better readability */
 }
 
 #WelcomeMainText {
@@ -65,17 +68,18 @@ QToolButton:checked {
 
 #WelcomeInstructionText {
     font-size: 11pt;
-    color: #a0a0a0; /* Softer gray for instructions */
+    color: #a0a0a0; /* A softer gray for less prominent text */
     padding: 15px;
 }
 
-/* --- Info Widget Style --- */
+/* === Info Widget (OHLCV Tooltip) === */
+/* Styling for the floating info box that appears on hover. */
 #InfoWidget {
-    background-color: rgba(30, 30, 30, 230); /* Dark, very semi-transparent */
+    background-color: rgba(30, 30, 30, 230); /* Dark, highly semi-transparent */
     color: #f0f0f0;
     border: 1px solid #555;
     border-radius: 4px;
     padding: 5px;
-    font-family: "monospace";
+    font-family: "monospace"; /* Use a monospace font for aligned numbers */
     font-size: 10pt;
 }
