@@ -12,7 +12,6 @@ from chart_renderers import PricePaneRenderer, VolumePaneRenderer, OverlayRender
 from chart_enums import ChartMode
 
 class CandleWidget(QOpenGLWidget):
-    # Signals remain the same
     barHovered = pyqtSignal(object, QPoint)
     mouseLeftChart = pyqtSignal()
     viewChanged = pyqtSignal()
@@ -20,19 +19,24 @@ class CandleWidget(QOpenGLWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # The widget now owns the state and the renderers
         self.state = ChartState()
         self.price_renderer = PricePaneRenderer()
         self.volume_renderer = VolumePaneRenderer()
         self.overlay_renderer = OverlayRenderer()
 
-        # UI settings
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
+    def _update_all_buffers(self):
+        """A centralized method to update all OpenGL buffers."""
+        visible_df = self.state.get_visible_data()
+        self.price_renderer.update_gl_buffers(visible_df, self.state)
+        self.volume_renderer.update_gl_buffers(visible_df, self.state)
+        self.update() # Trigger a repaint
+
     def set_data(self, dataframe: pd.DataFrame):
         self.state.set_data(dataframe)
-        self.update()
+        self._update_all_buffers()
         
     def set_mode(self, mode: ChartMode):
         self.state.mode = mode
@@ -45,7 +49,7 @@ class CandleWidget(QOpenGLWidget):
     def set_start_bar(self, value: int):
         if value != self.state.start_bar:
             self.state.update_start_bar(value)
-            self.update()
+            self._update_all_buffers()
 
     # --- Event Handlers: Translate user input into state changes ---
 
@@ -86,10 +90,13 @@ class CandleWidget(QOpenGLWidget):
             bar_delta = delta_x / bar_width
             
             new_start_bar = self.state.pan_start_bar - int(bar_delta)
-            self.state.update_start_bar(new_start_bar)
             
-            self.update()
-            self.viewChanged.emit()
+            # Check if a change actually occurred before updating
+            old_start_bar = self.state.start_bar
+            self.state.update_start_bar(new_start_bar)
+            if old_start_bar != self.state.start_bar:
+                self._update_all_buffers()
+                self.viewChanged.emit()
             return
 
         if self.state.is_dragging:
@@ -97,8 +104,8 @@ class CandleWidget(QOpenGLWidget):
             self.update()
             return
         
+        # Hover logic remains largely the same, but no repaint needed
         if self.state.df.empty: return
-        
         bar_width = self.width() / self.state.visible_bars
         hover_index_in_view = int(self.state.mouse_pos.x() / bar_width)
         actual_index = self.state.start_bar + hover_index_in_view
@@ -112,7 +119,7 @@ class CandleWidget(QOpenGLWidget):
                 self.barHovered.emit(self.state.df.iloc[actual_index], event.globalPosition().toPoint())
             else:
                 self.mouseLeftChart.emit()
-        self.update()
+            self.update() # Repaint only needed for crosshair
 
     def wheelEvent(self, event):
         if self.state.df.empty:
@@ -138,7 +145,7 @@ class CandleWidget(QOpenGLWidget):
         new_start_bar = index_under_mouse - new_start_bar_offset
         self.state.update_start_bar(new_start_bar)
 
-        self.update()
+        self._update_all_buffers()
         self.viewChanged.emit()
         event.accept()
 
@@ -168,14 +175,16 @@ class CandleWidget(QOpenGLWidget):
             self.state.update_start_bar(new_start_bar)
         elif event.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             self.state.zoom_factor *= 0.9
+            self.update() # Only need a repaint, not a buffer update
         elif event.key() == Qt.Key.Key_Minus:
             self.state.zoom_factor *= 1.1
+            self.update() # Only need a repaint, not a buffer update
         else:
             super().keyPressEvent(event)
             return
             
         if original_start_bar != self.state.start_bar or original_visible_bars != self.state.visible_bars:
-            self.update()
+            self._update_all_buffers()
             self.viewChanged.emit()
 
     def leaveEvent(self, event):
@@ -185,38 +194,31 @@ class CandleWidget(QOpenGLWidget):
         self.update()
         super().leaveEvent(event)
 
-    def initializeGL(self): pass
-    def resizeGL(self, w: int, h: int): pass
-    
-    # --- Rendering Orchestration ---
-    
-    def paintGL(self):
-        # 1. Clear background
+    def initializeGL(self): 
+        # One-time GL setup
         c = self.state.bg_color
         glClearColor(c.redF(), c.greenF(), c.blueF(), 1.0)
+
+    def resizeGL(self, w: int, h: int):
+        glViewport(0, 0, w, h)
+    
+    def paintGL(self):
         glClear(GL_COLOR_BUFFER_BIT)
-        
         if self.state.df.empty: return
         
-        # 2. Ensure state is valid
-        self.state.update_start_bar(self.state.start_bar)
-        
-        # 3. Calculate pane geometry (for both GL and Painter)
         w, h = self.width(), self.height()
         or_constants = self.overlay_renderer
         chart_area_h = h - or_constants.time_axis_height
         volume_pane_h = int(chart_area_h * self.state.volume_pane_ratio)
         price_pane_h = chart_area_h - volume_pane_h - or_constants.pane_separator_height
         
-        # Y-offsets are from the bottom for OpenGL
         volume_pane_y = or_constants.time_axis_height
         price_pane_y = volume_pane_y + volume_pane_h + or_constants.pane_separator_height
         
-        # 4. Delegate to Renderers
+        # The render methods now just draw what's in their buffers
         self.price_renderer.render(self.state, w, price_pane_h, price_pane_y)
         self.volume_renderer.render(self.state, w, volume_pane_h, volume_pane_y)
         
-        # 5. Paint overlays using QPainter
         painter = QPainter(self)
         self.overlay_renderer.render(painter, self.state, w, h)
         painter.end()

@@ -2,19 +2,66 @@
 from PyQt6.QtGui import QPainter, QPen, QColor, QFont, QBrush, QTextDocument
 from PyQt6.QtCore import Qt, QRectF, QPoint, QRect
 from OpenGL.GL import *
+from OpenGL.arrays import vbo
 import pandas as pd
+import numpy as np
 
 from chart_enums import ChartMode
 from chart_state import ChartState
 
 class PricePaneRenderer:
-    """Renders the main price candlestick chart using OpenGL."""
-    def render(self, state: ChartState, w: int, pane_h: int, y_offset: int):
-        visible_df = state.get_visible_data()
+    """Renders the main price candlestick chart using high-performance VBOs."""
+    def __init__(self):
+        self.wick_vbo = vbo.VBO(np.array([], dtype=np.float32))
+        self.wick_color_vbo = vbo.VBO(np.array([], dtype=np.float32))
+        self.body_vbo = vbo.VBO(np.array([], dtype=np.float32))
+        self.body_color_vbo = vbo.VBO(np.array([], dtype=np.float32))
+        self.wick_vert_count = 0
+        self.body_vert_count = 0
+
+    def update_gl_buffers(self, visible_df: pd.DataFrame, state: ChartState):
         if visible_df.empty:
+            self.wick_vert_count = 0
+            self.body_vert_count = 0
+            return
+
+        # Prepare Wick Data (2 vertices per wick)
+        wick_vertices = np.zeros((len(visible_df) * 2, 2), dtype=np.float32)
+        indices = np.arange(len(visible_df))
+        wick_vertices[0::2, 0] = indices + 0.5 # x for low
+        wick_vertices[0::2, 1] = visible_df['l'].values # y for low
+        wick_vertices[1::2, 0] = indices + 0.5 # x for high
+        wick_vertices[1::2, 1] = visible_df['h'].values # y for high
+        
+        wick_colors = np.full((len(visible_df) * 2, 3), [0.5, 0.5, 0.5], dtype=np.float32)
+
+        self.wick_vbo.set_array(wick_vertices)
+        self.wick_color_vbo.set_array(wick_colors)
+        self.wick_vert_count = len(wick_vertices)
+
+        # Prepare Body Data (4 vertices per body)
+        body_vertices = np.zeros((len(visible_df) * 4, 2), dtype=np.float32)
+        body_vertices[0::4, 0] = indices + 0.1; body_vertices[0::4, 1] = visible_df['o'].values
+        body_vertices[1::4, 0] = indices + 0.9; body_vertices[1::4, 1] = visible_df['o'].values
+        body_vertices[2::4, 0] = indices + 0.9; body_vertices[2::4, 1] = visible_df['c'].values
+        body_vertices[3::4, 0] = indices + 0.1; body_vertices[3::4, 1] = visible_df['c'].values
+
+        is_up = (visible_df['c'] >= visible_df['o']).values
+        up_color = [state.up_color.redF(), state.up_color.greenF(), state.up_color.blueF()]
+        down_color = [state.down_color.redF(), state.down_color.greenF(), state.down_color.blueF()]
+        
+        colors = np.array([up_color if up else down_color for up in is_up], dtype=np.float32)
+        body_colors = np.repeat(colors, 4, axis=0) # Repeat color for each of the 4 vertices
+
+        self.body_vbo.set_array(body_vertices)
+        self.body_color_vbo.set_array(body_colors)
+        self.body_vert_count = len(body_vertices)
+
+    def render(self, state: ChartState, w: int, pane_h: int, y_offset: int):
+        if self.wick_vert_count == 0 and self.body_vert_count == 0:
             return
             
-        min_price, display_range = state.get_price_range(visible_df)
+        min_price, display_range = state.get_price_range(state.get_visible_data())
         max_price = min_price + display_range
 
         glEnable(GL_SCISSOR_TEST)
@@ -26,34 +73,60 @@ class PricePaneRenderer:
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
         
-        # Draw wicks
-        glBegin(GL_LINES)
-        for i, (idx, row) in enumerate(visible_df.iterrows()):
-            glColor3f(0.5, 0.5, 0.5)
-            glVertex2f(i + 0.5, row['l'])
-            glVertex2f(i + 0.5, row['h'])
-        glEnd()
-        
-        # Draw candle bodies
-        glBegin(GL_QUADS)
-        for i, (idx, row) in enumerate(visible_df.iterrows()):
-            color = state.up_color if row['c'] >= row['o'] else state.down_color
-            glColor3f(color.redF(), color.greenF(), color.blueF())
-            glVertex2f(i + 0.1, row['o'])
-            glVertex2f(i + 0.9, row['o'])
-            glVertex2f(i + 0.9, row['c'])
-            glVertex2f(i + 0.1, row['c'])
-        glEnd()
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
 
+        # Draw Wicks
+        self.wick_vbo.bind()
+        glVertexPointer(2, GL_FLOAT, 0, self.wick_vbo)
+        self.wick_color_vbo.bind()
+        glColorPointer(3, GL_FLOAT, 0, self.wick_color_vbo)
+        glDrawArrays(GL_LINES, 0, self.wick_vert_count)
+        
+        # Draw Bodies
+        self.body_vbo.bind()
+        glVertexPointer(2, GL_FLOAT, 0, self.body_vbo)
+        self.body_color_vbo.bind()
+        glColorPointer(3, GL_FLOAT, 0, self.body_color_vbo)
+        glDrawArrays(GL_QUADS, 0, self.body_vert_count)
+
+        glDisableClientState(GL_COLOR_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
         glDisable(GL_SCISSOR_TEST)
 
 class VolumePaneRenderer:
-    """Renders the volume bars using OpenGL."""
-    def render(self, state: ChartState, w: int, pane_h: int, y_offset: int):
-        visible_df = state.get_visible_data()
+    """Renders the volume bars using high-performance VBOs."""
+    def __init__(self):
+        self.volume_vbo = vbo.VBO(np.array([], dtype=np.float32))
+        self.volume_color_vbo = vbo.VBO(np.array([], dtype=np.float32))
+        self.volume_vert_count = 0
+        
+    def update_gl_buffers(self, visible_df: pd.DataFrame, state: ChartState):
         if visible_df.empty:
+            self.volume_vert_count = 0
             return
             
+        volume_vertices = np.zeros((len(visible_df) * 4, 2), dtype=np.float32)
+        indices = np.arange(len(visible_df))
+        volume_vertices[0::4, 0] = indices + 0.1; volume_vertices[0::4, 1] = 0
+        volume_vertices[1::4, 0] = indices + 0.9; volume_vertices[1::4, 1] = 0
+        volume_vertices[2::4, 0] = indices + 0.9; volume_vertices[2::4, 1] = visible_df['v'].values
+        volume_vertices[3::4, 0] = indices + 0.1; volume_vertices[3::4, 1] = visible_df['v'].values
+        
+        is_up = (visible_df['c'] >= visible_df['o']).values
+        up_color = [state.up_color.redF(), state.up_color.greenF(), state.up_color.blueF(), 0.7]
+        down_color = [state.down_color.redF(), state.down_color.greenF(), state.down_color.blueF(), 0.7]
+        colors = np.array([up_color if up else down_color for up in is_up], dtype=np.float32)
+        volume_colors = np.repeat(colors, 4, axis=0)
+
+        self.volume_vbo.set_array(volume_vertices)
+        self.volume_color_vbo.set_array(volume_colors)
+        self.volume_vert_count = len(volume_vertices)
+
+    def render(self, state: ChartState, w: int, pane_h: int, y_offset: int):
+        if self.volume_vert_count == 0: return
+        
+        visible_df = state.get_visible_data() # Still needed for max_volume
         max_volume = visible_df['v'].max() if not visible_df['v'].empty else 1
         
         glEnable(GL_SCISSOR_TEST)
@@ -67,15 +140,18 @@ class VolumePaneRenderer:
         
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        glBegin(GL_QUADS)
-        for i, (idx, row) in enumerate(visible_df.iterrows()):
-            color = state.up_color if row['c'] >= row['o'] else state.down_color
-            glColor4f(color.redF(), color.greenF(), color.blueF(), 0.7)
-            glVertex2f(i + 0.1, 0)
-            glVertex2f(i + 0.9, 0)
-            glVertex2f(i + 0.9, row['v'])
-            glVertex2f(i + 0.1, row['v'])
-        glEnd()
+        
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        
+        self.volume_vbo.bind()
+        glVertexPointer(2, GL_FLOAT, 0, self.volume_vbo)
+        self.volume_color_vbo.bind()
+        glColorPointer(4, GL_FLOAT, 0, self.volume_color_vbo)
+        glDrawArrays(GL_QUADS, 0, self.volume_vert_count)
+
+        glDisableClientState(GL_COLOR_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
         glDisable(GL_BLEND)
         glDisable(GL_SCISSOR_TEST)
 
@@ -230,7 +306,7 @@ class OverlayRenderer:
         painter.setBrush(QColor(30, 30, 30, 220)); painter.setPen(QColor(150, 150, 150))
         painter.drawRoundedRect(QRectF(info_box_rect), 3, 3)
         
-        painter.save() # <-- THE FIX IS HERE
+        painter.save()
         painter.translate(info_box_rect.topLeft())
         doc.drawContents(painter)
         painter.restore()
