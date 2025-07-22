@@ -4,11 +4,15 @@ I originally built this tool as a simple helper application for a personal machi
 
 This is an open-source tool, built by a developer for developers. It's designed to be tinkered with.
 
+<p align="center">
+  <!-- 🚀 YOUR NAVIGATION GIF LINK GOES HERE -->
+  <img src="https://i.imgur.com/WUc6M7G.gif" alt="Chart Navigation Demo" width="800">
+</p>
 
-![Chart Navigation Demo](https://i.imgur.com/WUc6M7G.gif)
-
-- IMPORTANT - Base only works with parquet formatted as described below in Preparing Your Data
 ---
+> **Heads-Up:** The application requires data to be in the `.parquet` format with the specific columns listed in the "Preparing Your Data" section below.
+---
+
 ## The Philosophy
 
 This tool was built with a few core principles in mind:
