@@ -1,12 +1,12 @@
 # Save this as main.py
 import sys
 from pathlib import Path
-from datetime import datetime # Added for month name conversion
+from datetime import datetime 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QDialog, 
                              QWidget, QSizePolicy, QVBoxLayout, QScrollBar)
 from PyQt6.QtGui import QAction, QIcon, QActionGroup
 from PyQt6.QtCore import Qt, QSettings, QPoint
-import re # Added for text parsing
+import re 
 
 # Import our custom modules
 from data_loader import load_parquet_data
@@ -106,9 +106,10 @@ class MainWindow(QMainWindow):
     def on_chart_view_changed(self):
         self.scrollbar.blockSignals(True)
         
-        total_bars = len(self.chart_widget.df)
-        visible_bars = self.chart_widget.visible_bars
-        start_bar = self.chart_widget.start_bar
+        # --- MODIFIED: Access data via the state object ---
+        total_bars = len(self.chart_widget.state.df)
+        visible_bars = self.chart_widget.state.visible_bars
+        start_bar = self.chart_widget.state.start_bar
         
         max_scroll_val = max(0, total_bars - visible_bars)
         
@@ -134,30 +135,20 @@ class MainWindow(QMainWindow):
     def update_action_states(self, is_data_loaded: bool):
         self.save_action.setEnabled(is_data_loaded); self.prepopulate_action.setEnabled(is_data_loaded); self.train_action.setEnabled(is_data_loaded)
 
-    # --- NEW: Helper function to make timeframe strings look nice ---
     def format_timeframe(self, tf_str: str) -> str:
-        # Use regex to find the number and the text part
         match = re.match(r"(\d+)([a-zA-Z]+)", tf_str)
-        if not match:
-            return tf_str # Return as-is if it doesn't match pattern
+        if not match: return tf_str 
 
         num_str, unit_str = match.groups()
         num = int(num_str)
-        unit_map = {
-            'sec': 'Second', 'min': 'Minute',
-            'h': 'Hour', 'd': 'Day', 'w': 'Week', 'm': 'Month'
-        }
+        unit_map = {'sec': 'Second', 'min': 'Minute', 'h': 'Hour', 'd': 'Day', 'w': 'Week', 'm': 'Month'}
         
-        # Find the full unit name
         unit_full = next((v for k, v in unit_map.items() if k in unit_str.lower()), unit_str.capitalize())
         
-        # Add 's' for plural, but not for "1"
-        if num > 1:
-            unit_full += "s"
+        if num > 1: unit_full += "s"
             
         return f"{num} {unit_full}"
 
-    # --- MODIFIED: open_file to parse the filename for rich context ---
     def open_file(self):
         last_dir = self.settings.value("last_data_dir", str(Path.home()))
         file_path, _ = QFileDialog.getOpenFileName(self, "Select a Parquet Data File", last_dir, "Parquet Files (*.parquet);;All Files (*)", options=QFileDialog.Option.DontUseNativeDialog)
@@ -167,7 +158,6 @@ class MainWindow(QMainWindow):
             if not ohlc_data.empty:
                 display_text = ""
                 try:
-                    # Try to parse the specific filename format: PEP_3min_ohlcvn_2024_07.parquet
                     stem = Path(file_path).stem
                     parts = stem.split('_')
                     if len(parts) >= 5:
@@ -177,10 +167,9 @@ class MainWindow(QMainWindow):
                         month_num = parts[4]
                         month_name = datetime.strptime(month_num, '%m').strftime('%B')
                         display_text = f"{ticker} ({timeframe})  -  {month_name} {year}"
-                    else: # Fallback for simpler names
+                    else: 
                         display_text = stem.split('_')[0].upper()
                 except Exception as e:
-                    # If parsing fails for any reason, use a simple fallback
                     print(f"Could not parse filename '{Path(file_path).name}', using fallback. Error: {e}")
                     display_text = Path(file_path).stem.split('_')[0].upper()
 
@@ -198,16 +187,18 @@ class MainWindow(QMainWindow):
 
     def open_preferences_dialog(self):
         dialog = PreferencesDialog(
-            initial_bg_color=self.chart_widget.bg_color,
-            initial_up_color=self.chart_widget.up_color,
-            initial_down_color=self.chart_widget.down_color,
+            # --- MODIFIED: Access colors via the state object ---
+            initial_bg_color=self.chart_widget.state.bg_color,
+            initial_up_color=self.chart_widget.state.up_color,
+            initial_down_color=self.chart_widget.state.down_color,
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             bg_color, up_color, down_color = dialog.get_selected_colors()
-            self.chart_widget.bg_color = bg_color
-            self.chart_widget.up_color = up_color
-            self.chart_widget.down_color = down_color
+            # --- MODIFIED: Set colors via the state object ---
+            self.chart_widget.state.bg_color = bg_color
+            self.chart_widget.state.up_color = up_color
+            self.chart_widget.state.down_color = down_color
             self.chart_widget.update()
 
     def closeEvent(self, event):
