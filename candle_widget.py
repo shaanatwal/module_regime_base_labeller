@@ -10,8 +10,9 @@ from OpenGL.GL import *
 from chart_enums import ChartMode
 
 class CandleWidget(QOpenGLWidget):
-    barHovered = pyqtSignal(object, QPoint) 
+    barHovered = pyqtSignal(object, QPoint)
     mouseLeftChart = pyqtSignal()
+    viewChanged = pyqtSignal()
 
     def __init__(self, dataframe: pd.DataFrame = None, parent=None):
         super().__init__(parent)
@@ -20,6 +21,8 @@ class CandleWidget(QOpenGLWidget):
         self.visible_bars = 100; self.start_bar = 0
         self.zoom_factor = 1.0; self.scroll_speed = 10
         self.volume_pane_ratio = 0.25; self.pane_separator_height = 5
+        self.time_axis_height = 30
+        self.price_padding_factor = 1.1
         
         self.bg_color = QColor(25, 25, 25); self.up_color = QColor(0, 204, 0)
         self.down_color = QColor(204, 0, 0); self.separator_color = QColor(80, 80, 80)
@@ -35,6 +38,8 @@ class CandleWidget(QOpenGLWidget):
         self.pan_start_pos = None
         self.pan_start_bar = 0
 
+        self.symbol_text = ""
+
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
     def set_data(self, dataframe: pd.DataFrame):
@@ -43,6 +48,14 @@ class CandleWidget(QOpenGLWidget):
         
     def set_mode(self, mode: ChartMode):
         self.mode = mode; self.is_dragging = False; self.update()
+
+    def set_symbol(self, symbol: str):
+        self.symbol_text = symbol
+
+    def set_start_bar(self, value: int):
+        if value != self.start_bar:
+            self.start_bar = value
+            self.update()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.mode == ChartMode.CURSOR:
@@ -86,6 +99,7 @@ class CandleWidget(QOpenGLWidget):
             self.start_bar = max(0, min(new_start_bar, max_start_bar))
             
             self.update()
+            self.viewChanged.emit()
             return
 
         if self.is_dragging:
@@ -131,48 +145,49 @@ class CandleWidget(QOpenGLWidget):
         self.start_bar = max(0, min(new_start_bar, max_start_bar))
 
         self.update()
+        self.viewChanged.emit()
         event.accept()
 
-    # --- MODIFIED: keyPressEvent with Up/Down arrow logic restored ---
     def keyPressEvent(self, event):
         if self.df.empty: super().keyPressEvent(event); return
+        
+        original_start_bar = self.start_bar
+        original_visible_bars = self.visible_bars
+
         max_start_bar = max(0, len(self.df) - self.visible_bars)
 
         if event.key() == Qt.Key.Key_Right:
             self.start_bar = min(self.start_bar + self.scroll_speed, max_start_bar)
         elif event.key() == Qt.Key.Key_Left:
             self.start_bar = max(0, self.start_bar - self.scroll_speed)
-        
-        # --- THIS LOGIC HAS BEEN RESTORED ---
         elif event.key() == Qt.Key.Key_Up or event.key() == Qt.Key.Key_Down:
             center_bar_index = self.start_bar + self.visible_bars // 2
             if event.key() == Qt.Key.Key_Up:
-                new_visible_bars = max(10, int(self.visible_bars * 0.8)) # Zoom in
-            else: # Key_Down
-                new_visible_bars = min(len(self.df), int(self.visible_bars * 1.2)) # Zoom out
+                new_visible_bars = max(10, int(self.visible_bars * 0.8))
+            else:
+                new_visible_bars = min(len(self.df), int(self.visible_bars * 1.2))
             
-            # Recalculate start_bar to keep the center fixed
             self.visible_bars = new_visible_bars
             new_start_bar = max(0, center_bar_index - self.visible_bars // 2)
             new_max_start_bar = max(0, len(self.df) - self.visible_bars)
             self.start_bar = min(new_start_bar, new_max_start_bar)
-        # --- END OF RESTORED LOGIC ---
-
         elif event.key() == Qt.Key.Key_Plus or event.key() == Qt.Key.Key_Equal:
-            self.zoom_factor *= 0.9 # This adjusts vertical zoom, which is different
+            self.zoom_factor *= 0.9
         elif event.key() == Qt.Key.Key_Minus:
-            self.zoom_factor *= 1.1 # This adjusts vertical zoom
-        
+            self.zoom_factor *= 1.1
         else:
             super().keyPressEvent(event)
             return
             
-        self.update()
+        if original_start_bar != self.start_bar or original_visible_bars != self.visible_bars:
+            self.update()
+            self.viewChanged.emit()
 
     def leaveEvent(self, event):
         self.last_hovered_index = -1; self.mouse_pos = None; self.mouseLeftChart.emit(); self.update(); super().leaveEvent(event)
     def initializeGL(self): pass
     def resizeGL(self, w: int, h: int): pass
+    
     def paintGL(self):
         glClearColor(self.bg_color.redF(), self.bg_color.greenF(), self.bg_color.blueF(), 1.0); glClear(GL_COLOR_BUFFER_BIT)
         if self.df.empty: return
@@ -184,48 +199,50 @@ class CandleWidget(QOpenGLWidget):
         if visible_df.empty: return
 
         w = self.width(); h = self.height()
-        volume_pane_height = int(h * self.volume_pane_ratio); price_pane_height = h - volume_pane_height - self.pane_separator_height
-        price_pane_y_offset = volume_pane_height + self.pane_separator_height
-        self.draw_price_pane(w, price_pane_height, price_pane_y_offset, visible_df); self.draw_volume_pane(w, volume_pane_height, visible_df)
-        painter = QPainter(self); self.draw_overlays(painter, w, h, price_pane_height, volume_pane_height, visible_df); painter.end()
+        
+        chart_area_h = h - self.time_axis_height
+        volume_pane_h = int(chart_area_h * self.volume_pane_ratio)
+        price_pane_h = chart_area_h - volume_pane_h - self.pane_separator_height
+        
+        volume_pane_y = self.time_axis_height
+        price_pane_y = volume_pane_y + volume_pane_h + self.pane_separator_height
 
-    def draw_price_pane(self, w, pane_h, pane_y, df):
-        glEnable(GL_SCISSOR_TEST); glScissor(0, pane_y, w, pane_h); glViewport(0, pane_y, w, pane_h)
-        min_price_actual=df['l'].min(); max_price_actual=df['h'].max(); center_price=(min_price_actual+max_price_actual)/2
-        display_range=(max_price_actual-min_price_actual)*self.zoom_factor if (max_price_actual-min_price_actual)>0 else 1
-        min_price=center_price-display_range/2; max_price=center_price+display_range/2
-        glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(0, self.visible_bars, min_price, max_price, -1, 1)
-        glMatrixMode(GL_MODELVIEW); glLoadIdentity(); self.draw_candles_gl(df); glDisable(GL_SCISSOR_TEST)
-    def draw_volume_pane(self, w, pane_h, df):
-        glEnable(GL_SCISSOR_TEST); glScissor(0, 0, w, pane_h); glViewport(0, 0, w, pane_h)
-        max_volume=df['v'].max() if not df['v'].empty else 1
-        glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(0, self.visible_bars, 0, max_volume * 1.05, -1, 1)
-        glMatrixMode(GL_MODELVIEW); glLoadIdentity(); self.draw_volume_gl(df); glDisable(GL_SCISSOR_TEST)
-    def draw_candles_gl(self, visible_df):
-        glBegin(GL_LINES)
-        for i, (idx, row) in enumerate(visible_df.iterrows()): glColor3f(0.5, 0.5, 0.5); glVertex2f(i + 0.5, row['l']); glVertex2f(i + 0.5, row['h'])
-        glEnd()
-        glBegin(GL_QUADS)
-        for i, (idx, row) in enumerate(visible_df.iterrows()):
-            color = self.up_color if row['c'] >= row['o'] else self.down_color; glColor3f(color.redF(), color.greenF(), color.blueF())
-            glVertex2f(i + 0.1, row['o']); glVertex2f(i + 0.9, row['o']); glVertex2f(i + 0.9, row['c']); glVertex2f(i + 0.1, row['c'])
-        glEnd()
-    def draw_volume_gl(self, visible__df):
-        glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glBegin(GL_QUADS)
-        for i, (idx, row) in enumerate(visible__df.iterrows()):
-            color = self.up_color if row['c'] >= row['o'] else self.down_color; glColor4f(color.redF(), color.greenF(), color.blueF(), 0.7)
-            glVertex2f(i + 0.1, 0); glVertex2f(i + 0.9, 0); glVertex2f(i + 0.9, row['v']); glVertex2f(i + 0.1, row['v'])
-        glEnd(); glDisable(GL_BLEND)
-    
+        self.draw_price_pane(w, price_pane_h, price_pane_y, visible_df)
+        self.draw_volume_pane(w, volume_pane_h, volume_pane_y, visible_df)
+        
+        painter = QPainter(self)
+        self.draw_overlays(painter, w, h, price_pane_h, volume_pane_h, visible_df)
+        painter.end()
+
     def draw_overlays(self, painter, w, h, price_pane_h, vol_pane_h, df):
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing); min_price, price_range = self.get_price_range(df)
-        self.draw_price_axis(painter, w, price_pane_h, min_price, price_range)
-        self.draw_volume_axis(painter, w, h, vol_pane_h, df['v'].max() if not df['v'].empty else 1)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        min_display_price, price_range = self.get_price_range(df)
+        max_high = df['h'].max()
+        min_low = df['l'].min()
+        
+        # Calculate Y-offset of the top of the panes for the painter (top-down coordinates)
+        price_pane_top_y = h - self.time_axis_height - vol_pane_h - self.pane_separator_height - price_pane_h
+        volume_pane_top_y = h - self.time_axis_height - vol_pane_h
+        
+        self.draw_price_axis(painter, w, price_pane_h, price_pane_top_y, min_display_price, price_range, max_high, min_low)
+        self.draw_volume_axis(painter, w, vol_pane_h, volume_pane_top_y, df['v'].max() if not df['v'].empty else 1)
         self.draw_time_axis_and_separators(painter, w, h, df)
-        if self.is_dragging: self.draw_drag_selection(painter, w, price_pane_h, min_price, price_range, df)
-        elif self.mouse_pos and self.mode == ChartMode.CURSOR: self.draw_crosshair(painter, w, h, price_pane_h, min_price, price_range, df)
+        self.draw_symbol_overlay(painter)
+        
+        if self.is_dragging: self.draw_drag_selection(painter, w, h, min_display_price, price_range, df)
+        elif self.mouse_pos and self.mode == ChartMode.CURSOR: self.draw_crosshair(painter, w, h, price_pane_top_y, price_pane_h, min_display_price, price_range, df)
 
-    def draw_drag_selection(self, painter, w, price_pane_h, min_price, price_range, df):
+    def draw_symbol_overlay(self, painter):
+        if not self.symbol_text:
+            return
+        font = QFont('Segoe UI', 14)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(220, 220, 220, 200))
+        painter.drawText(QRectF(15, 5, 500, 30), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.symbol_text)
+
+    def draw_drag_selection(self, painter, w, h, min_price, price_range, df):
         selection_rect = QRect(self.drag_start_pos, self.drag_end_pos).normalized()
         painter.setBrush(QColor(100, 120, 200, 40)); painter.setPen(QPen(QColor(130, 170, 255), 1)); painter.drawRect(selection_rect)
         
@@ -265,45 +282,119 @@ class CandleWidget(QOpenGLWidget):
         painter.restore()
 
     def get_price_range(self, df):
-        min_price_actual=df['l'].min(); max_price_actual=df['h'].max(); center_price=(min_price_actual+max_price_actual)/2
-        display_range=(max_price_actual-min_price_actual)*self.zoom_factor if (max_price_actual-min_price_actual)>0 else 1
-        return center_price-display_range/2, display_range
-    def draw_price_axis(self, painter, w, pane_h, min_price, price_range):
-        for i in range(9):
-            price = min_price + (i / 8) * price_range; y = pane_h - int(((price - min_price) / price_range) * pane_h)
+        min_price_actual = df['l'].min()
+        max_price_actual = df['h'].max()
+        center_price = (min_price_actual + max_price_actual) / 2
+        data_range = max_price_actual - min_price_actual
+        
+        display_range = (data_range * self.zoom_factor * self.price_padding_factor) if data_range > 0 else 1
+        
+        return center_price - display_range / 2, display_range
+    
+    def draw_price_pane(self, w, pane_h, y_offset, df):
+        min_price, display_range = self.get_price_range(df)
+        max_price = min_price + display_range
+
+        glEnable(GL_SCISSOR_TEST); glScissor(0, y_offset, w, pane_h); glViewport(0, y_offset, w, pane_h)
+        glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(0, self.visible_bars, min_price, max_price, -1, 1)
+        glMatrixMode(GL_MODELVIEW); glLoadIdentity(); self.draw_candles_gl(df); glDisable(GL_SCISSOR_TEST)
+    
+    def draw_volume_pane(self, w, pane_h, y_offset, df):
+        glEnable(GL_SCISSOR_TEST); glScissor(0, y_offset, w, pane_h); glViewport(0, y_offset, w, pane_h)
+        max_volume=df['v'].max() if not df['v'].empty else 1
+        glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(0, self.visible_bars, 0, max_volume * 1.05, -1, 1)
+        glMatrixMode(GL_MODELVIEW); glLoadIdentity(); self.draw_volume_gl(df); glDisable(GL_SCISSOR_TEST)
+
+    def draw_candles_gl(self, visible_df):
+        glBegin(GL_LINES)
+        for i, (idx, row) in enumerate(visible_df.iterrows()): glColor3f(0.5, 0.5, 0.5); glVertex2f(i + 0.5, row['l']); glVertex2f(i + 0.5, row['h'])
+        glEnd()
+        glBegin(GL_QUADS)
+        for i, (idx, row) in enumerate(visible_df.iterrows()):
+            color = self.up_color if row['c'] >= row['o'] else self.down_color; glColor3f(color.redF(), color.greenF(), color.blueF())
+            glVertex2f(i + 0.1, row['o']); glVertex2f(i + 0.9, row['o']); glVertex2f(i + 0.9, row['c']); glVertex2f(i + 0.1, row['c'])
+        glEnd()
+    def draw_volume_gl(self, visible__df):
+        glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glBegin(GL_QUADS)
+        for i, (idx, row) in enumerate(visible__df.iterrows()):
+            color = self.up_color if row['c'] >= row['o'] else self.down_color; glColor4f(color.redF(), color.greenF(), color.blueF(), 0.7)
+            glVertex2f(i + 0.1, 0); glVertex2f(i + 0.9, 0); glVertex2f(i + 0.9, row['v']); glVertex2f(i + 0.1, row['v'])
+        glEnd(); glDisable(GL_BLEND)
+    
+    # --- MODIFIED: Explicitly cast calculated Y coordinates to int ---
+    def draw_price_axis(self, painter, w, pane_h, pane_top_y, min_display_price, price_range, actual_max, actual_min):
+        def price_to_y(price):
+            price_ratio = (price - min_display_price) / price_range
+            return pane_top_y + ((1 - price_ratio) * pane_h)
+        
+        for i in range(1, 8):
+            price = min_display_price + (i / 8) * price_range
+            y = int(price_to_y(price)) # <-- FIX
             painter.setPen(QPen(self.separator_color, 1, Qt.PenStyle.DotLine)); painter.drawLine(0, y, w, y)
             self.draw_highlighted_text(painter, QRectF(w - 75, y - 9, 70, 18), f"{price:.2f}")
-    def draw_volume_axis(self, painter, w, h, pane_h, max_volume):
-        for i in range(3):
-            vol = (i / 2) * max_volume; y = h - int((vol / (max_volume * 1.05)) * pane_h)
+
+        y_max = int(price_to_y(actual_max)) # <-- FIX
+        self.draw_highlighted_text(painter, QRectF(w - 75, y_max - 9, 70, 18), f"{actual_max:.2f}")
+        
+        y_min = int(price_to_y(actual_min)) # <-- FIX
+        self.draw_highlighted_text(painter, QRectF(w - 75, y_min - 9, 70, 18), f"{actual_min:.2f}")
+
+    # --- MODIFIED: Explicitly cast calculated Y coordinates to int ---
+    def draw_volume_axis(self, painter, w, pane_h, pane_top_y, max_volume):
+        for i in range(1, 3):
+            vol = (i / 2) * max_volume
+            vol_ratio = vol / (max_volume * 1.05)
+            y = int(pane_top_y + ((1 - vol_ratio) * pane_h)) # <-- FIX
+            
             painter.setPen(QPen(self.separator_color, 1, Qt.PenStyle.DotLine)); painter.drawLine(0, y, w, y)
-            vol_str = f"{vol/1_000_000:.2f}M" if vol>1_000_000 else f"{vol/1_000:.1f}k" if vol>1_000 else str(int(vol))
-            self.draw_highlighted_text(painter, QRectF(w - 75, y - 9, 70, 18), vol_str)
+
     def draw_time_axis_and_separators(self, painter, w, h, df):
-        first_ts = df['t'].iloc[0].tz_convert('America/New_York'); date_str = first_ts.strftime('%Y-%m-%d')
-        painter.setFont(QFont('monospace', 10)); painter.setPen(QPen(QColor(200, 200, 200))); painter.drawText(10, 15, date_str)
         last_date = None
-        for i, (idx, row) in enumerate(df.iterrows()):
-            ts = row['t'].tz_convert('America/New_York')
-            if last_date and ts.date() != last_date:
-                x = int((i / self.visible_bars) * w); painter.setPen(QPen(self.separator_color, 1, Qt.PenStyle.DashLine)); painter.drawLine(x, 0, x, h - 30)
-            last_date = ts.date()
+        if not df.empty:
+            last_date = df['t'].iloc[0].tz_convert('America/New_York').date()
+        
         bar_step = max(1, self.visible_bars // 10)
         for i in range(0, len(df), bar_step):
-            ts = df['t'].iloc[i].tz_convert('America/New_York'); x_pos = int(((i + 0.5) / self.visible_bars) * w)
+            ts = df['t'].iloc[i].tz_convert('America/New_York')
+            x_pos = int(((i + 0.5) / self.visible_bars) * w)
+            time_str = ts.strftime('%H:%M')
+            
+            alignment = Qt.AlignmentFlag.AlignCenter
+            rect = QRectF(x_pos - 50, h - 25, 100, 20)
+            
+            if i == 0 and rect.left() < 0:
+                alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            
             font = QFont('monospace', 9); font.setBold(True); painter.setFont(font); painter.setPen(QPen(QColor(220, 220, 220)))
-            painter.drawText(QRectF(x_pos - 50, h - 25, 100, 20), Qt.AlignmentFlag.AlignCenter, ts.strftime('%H:%M'))
-    def draw_crosshair(self, painter, w, h, price_pane_h, min_price, price_range, df):
+            painter.drawText(rect, alignment, time_str)
+
+        for i, (idx, row) in enumerate(df.iterrows()):
+            ts = row['t'].tz_convert('America/New_York')
+            current_date = ts.date()
+            if last_date and current_date != last_date:
+                x = int((i / self.visible_bars) * w)
+                painter.setPen(QPen(self.separator_color, 1, Qt.PenStyle.DashLine)); painter.drawLine(x, self.time_axis_height, x, h)
+                date_str = ts.strftime('%d %b')
+                font = QFont('monospace', 9); font.setBold(True); painter.setFont(font)
+                painter.setPen(QPen(QColor(220, 220, 220, 180)))
+                painter.drawText(QRectF(x + 5, h - 25, 60, 20), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, date_str)
+            last_date = current_date
+
+    def draw_crosshair(self, painter, w, h, price_pane_top_y, price_pane_h, min_price, price_range, df):
         pen = QPen(self.crosshair_color, 1, Qt.PenStyle.DashLine); painter.setPen(pen)
         if self.last_hovered_index != -1:
             index_in_view = self.last_hovered_index - self.start_bar
             x = int((index_in_view + 0.5) * (w / self.visible_bars))
-            painter.drawLine(x, 0, x, h)
+            painter.drawLine(x, self.time_axis_height, x, h)
+        
         y = self.mouse_pos.y()
-        if y < price_pane_h:
-             painter.drawLine(0, y, w, y)
-             price = min_price + ((price_pane_h - y) / price_pane_h) * price_range
+        if y < h - self.time_axis_height:
+            painter.drawLine(0, y, w, y)
+        
+        if y >= price_pane_top_y and y < price_pane_top_y + price_pane_h:
+             price = min_price + ((price_pane_top_y + price_pane_h - y) / price_pane_h) * price_range
              self.draw_highlighted_text(painter, QRectF(w - 75, y - 9, 70, 18), f"{price:.2f}", self.crosshair_color)
+
     def draw_highlighted_text(self, painter, rect, text, bg_color=QColor(40, 40, 40, 180)):
         painter.setBrush(QBrush(bg_color)); painter.setPen(Qt.PenStyle.NoPen); painter.drawRect(rect)
         painter.setPen(QPen(QColor(220, 220, 220))); painter.setFont(QFont('monospace', 9))
