@@ -60,3 +60,15 @@ QToolButton:disabled {
     color: #a0a0a0; /* Softer gray for instructions */
     padding: 15px;
 }
+
+/* Add this to the end of your main.qss file */
+
+#InfoWidget {
+    background-color: rgba(30, 30, 30, 230); /* Dark, very semi-transparent */
+    color: #f0f0f0;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 5px;
+    font-family: "monospace";
+    font-size: 10pt;
+}
