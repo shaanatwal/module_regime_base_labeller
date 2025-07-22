@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QColor, QPainter, QPen, QFont
 from PyQt6.QtCore import Qt, QPoint
 from OpenGL.GL import *
+import numpy as np
 
 class CandleWidget(QOpenGLWidget):
     def __init__(self, dataframe: pd.DataFrame = None, parent=None):
@@ -16,206 +17,194 @@ class CandleWidget(QOpenGLWidget):
         self.zoom_factor = 1.0
         self.scroll_speed = 10
         
+        # --- UI and Layout Ratios ---
+        self.volume_pane_ratio = 0.25 
+        self.pane_separator_height = 5 # NEW: The pixel gap between panes
+
         # --- Default Colors ---
         self.bg_color = QColor(25, 25, 25)
         self.up_color = QColor(0, 204, 0)
         self.down_color = QColor(204, 0, 0)
-        self.separator_color = QColor(80, 80, 80)
-
+        self.separator_color = QColor(80, 80, 80) # Color for grid lines and the divider
+        
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
-    # --- Color Getters/Setters ---
-    def set_background_color(self, color: QColor):
-        self.bg_color = color
-        self.update()
-
-    def get_background_color(self) -> QColor:
-        return self.bg_color
-        
-    def set_up_color(self, color: QColor):
-        self.up_color = color
-        self.update()
-
-    def get_up_color(self) -> QColor:
-        return self.up_color
-        
-    def set_down_color(self, color: QColor):
-        self.down_color = color
-        self.update()
-
-    def get_down_color(self) -> QColor:
-        return self.down_color
+    def set_background_color(self, color: QColor): self.bg_color = color; self.update()
+    def get_background_color(self) -> QColor: return self.bg_color
+    def set_up_color(self, color: QColor): self.up_color = color; self.update()
+    def get_up_color(self) -> QColor: return self.up_color
+    def set_down_color(self, color: QColor): self.down_color = color; self.update()
+    def get_down_color(self) -> QColor: return self.down_color
 
     def set_data(self, dataframe: pd.DataFrame):
-        self.df = dataframe
-        self.start_bar = 0
-        self.zoom_factor = 1.0
-        self.visible_bars = 100
-        self.update()
+        self.df = dataframe; self.start_bar = 0; self.zoom_factor = 1.0;
+        self.visible_bars = 100; self.update()
 
     def keyPressEvent(self, event):
+        # (Key press logic remains unchanged)
         if self.df.empty:
-            super().keyPressEvent(event)
-            return
-
+            super().keyPressEvent(event); return
         max_start_bar = max(0, len(self.df) - self.visible_bars)
-        
-        if event.key() == Qt.Key.Key_Right:
-            self.start_bar = min(self.start_bar + self.scroll_speed, max_start_bar)
-            self.update()
-        elif event.key() == Qt.Key.Key_Left:
-            self.start_bar = max(0, self.start_bar - self.scroll_speed)
-            self.update()
-            
-        elif event.key() == Qt.Key.Key_Plus or event.key() == Qt.Key.Key_Equal:
-            self.zoom_factor *= 0.9
-            self.update()
-        elif event.key() == Qt.Key.Key_Minus:
-            self.zoom_factor *= 1.1
-            self.update()
-
+        if event.key() == Qt.Key.Key_Right: self.start_bar = min(self.start_bar + self.scroll_speed, max_start_bar)
+        elif event.key() == Qt.Key.Key_Left: self.start_bar = max(0, self.start_bar - self.scroll_speed)
+        elif event.key() == Qt.Key.Key_Plus or event.key() == Qt.Key.Key_Equal: self.zoom_factor *= 0.9
+        elif event.key() == Qt.Key.Key_Minus: self.zoom_factor *= 1.1
         elif event.key() == Qt.Key.Key_Up or event.key() == Qt.Key.Key_Down:
             center_bar_index = self.start_bar + self.visible_bars // 2
-            
-            if event.key() == Qt.Key.Key_Up:
-                new_visible_bars = max(10, int(self.visible_bars * 0.8))
-            else:
-                new_visible_bars = min(len(self.df), int(self.visible_bars * 1.2))
-
+            if event.key() == Qt.Key.Key_Up: new_visible_bars = max(10, int(self.visible_bars * 0.8))
+            else: new_visible_bars = min(len(self.df), int(self.visible_bars * 1.2))
             self.visible_bars = new_visible_bars
-            
             new_start_bar = max(0, center_bar_index - self.visible_bars // 2)
-            
             new_max_start_bar = max(0, len(self.df) - self.visible_bars)
             self.start_bar = min(new_start_bar, new_max_start_bar)
-            
-            self.update()
-
         else:
-            super().keyPressEvent(event)
+            super().keyPressEvent(event); return
+        self.update()
 
-    def initializeGL(self):
-        # This is called only once. The background color clear
-        # needs to happen in paintGL to allow for dynamic changes.
-        pass
 
-    def resizeGL(self, w: int, h: int):
-        glViewport(0, 0, w, h)
+    def initializeGL(self): pass
+    def resizeGL(self, w: int, h: int): pass
 
     def paintGL(self):
-        # FIX: Set the clear color here, every time we paint.
         glClearColor(self.bg_color.redF(), self.bg_color.greenF(), self.bg_color.blueF(), 1.0)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glClear(GL_COLOR_BUFFER_BIT)
         
-        if self.df.empty:
-            return
-
+        if self.df.empty: return
         visible_df = self.df.iloc[self.start_bar : self.start_bar + self.visible_bars]
-        if visible_df.empty:
-            return
-
-        min_price_actual = visible_df['l'].min()
-        max_price_actual = visible_df['h'].max()
+        if visible_df.empty: return
         
+        w = self.width()
+        h = self.height()
+        
+        # --- Calculate Pane Dimensions with a Gap ---
+        volume_pane_height = int(h * self.volume_pane_ratio)
+        price_pane_height = h - volume_pane_height - self.pane_separator_height
+        price_pane_y_offset = volume_pane_height + self.pane_separator_height
+        
+        self.draw_price_pane(w, price_pane_height, price_pane_y_offset, visible_df)
+        self.draw_volume_pane(w, volume_pane_height, visible_df)
+        
+        painter = QPainter(self)
+        self.draw_overlays(painter, w, h, price_pane_height, volume_pane_height, visible_df)
+        painter.end()
+        
+    def draw_price_pane(self, w, pane_h, pane_y, df):
+        # FIX: Enable scissor test to strictly clip rendering to this pane
+        glEnable(GL_SCISSOR_TEST)
+        glScissor(0, pane_y, w, pane_h)
+        
+        glViewport(0, pane_y, w, pane_h)
+        # (The rest of the logic is the same)
+        min_price_actual = df['l'].min(); max_price_actual = df['h'].max()
         center_price = (min_price_actual + max_price_actual) / 2
         display_range = (max_price_actual - min_price_actual) * self.zoom_factor if (max_price_actual - min_price_actual) > 0 else 1
-        
-        min_price = center_price - display_range / 2
-        max_price = center_price + display_range / 2
-        
-        price_range = max_price - min_price
-        if price_range <= 1e-9:
-            price_range = 1
-        
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
+        min_price = center_price - display_range / 2; max_price = center_price + display_range / 2
+        glMatrixMode(GL_PROJECTION); glLoadIdentity()
         glOrtho(0, self.visible_bars, min_price, max_price, -1, 1)
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
-
-        self.draw_candles_gl(visible_df)
-
-        painter = QPainter(self)
-        self.draw_axes_and_separators(painter, min_price, max_price, price_range, visible_df)
-        painter.end()
-
-
+        glMatrixMode(GL_MODELVIEW); glLoadIdentity()
+        self.draw_candles_gl(df)
+        
+        glDisable(GL_SCISSOR_TEST)
+        
+    def draw_volume_pane(self, w, pane_h, df):
+        # FIX: Enable scissor test for the volume pane as well
+        glEnable(GL_SCISSOR_TEST)
+        glScissor(0, 0, w, pane_h)
+        
+        glViewport(0, 0, w, pane_h)
+        # (The rest of the logic is the same)
+        max_volume = df['v'].max() if not df['v'].empty else 1
+        glMatrixMode(GL_PROJECTION); glLoadIdentity()
+        glOrtho(0, self.visible_bars, 0, max_volume * 1.05, -1, 1)
+        glMatrixMode(GL_MODELVIEW); glLoadIdentity()
+        self.draw_volume_gl(df)
+        
+        glDisable(GL_SCISSOR_TEST)
+        
     def draw_candles_gl(self, visible_df):
+        # (This function is unchanged)
         glBegin(GL_LINES)
         for i, (index, row) in enumerate(visible_df.iterrows()):
-            glColor3f(0.5, 0.5, 0.5) # Wick color
+            glColor3f(0.5, 0.5, 0.5)
             glVertex2f(i + 0.5, row['l'])
             glVertex2f(i + 0.5, row['h'])
         glEnd()
-        
         glBegin(GL_QUADS)
         for i, (index, row) in enumerate(visible_df.iterrows()):
-            # Use customizable colors
-            if row['c'] >= row['o']:
-                up = self.up_color
-                glColor3f(up.redF(), up.greenF(), up.blueF())
-            else:
-                down = self.down_color
-                glColor3f(down.redF(), down.greenF(), down.blueF())
-            
-            glVertex2f(i + 0.1, row['o'])
-            glVertex2f(i + 0.9, row['o'])
-            glVertex2f(i + 0.9, row['c'])
-            glVertex2f(i + 0.1, row['c'])
+            color = self.up_color if row['c'] >= row['o'] else self.down_color
+            glColor3f(color.redF(), color.greenF(), color.blueF())
+            glVertex2f(i + 0.1, row['o']); glVertex2f(i + 0.9, row['o'])
+            glVertex2f(i + 0.9, row['c']); glVertex2f(i + 0.1, row['c'])
         glEnd()
+        
+    def draw_volume_gl(self, visible_df):
+        # (This function is unchanged)
+        glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glBegin(GL_QUADS)
+        for i, (index, row) in enumerate(visible_df.iterrows()):
+            color = self.up_color if row['c'] >= row['o'] else self.down_color
+            glColor4f(color.redF(), color.greenF(), color.blueF(), 0.7)
+            glVertex2f(i + 0.1, 0); glVertex2f(i + 0.9, 0)
+            glVertex2f(i + 0.9, row['v']); glVertex2f(i + 0.1, row['v'])
+        glEnd()
+        glDisable(GL_BLEND)
 
-    def draw_axes_and_separators(self, painter, min_price, max_price, price_range, visible_df):
-        """Draws axes, date display, and day separator lines."""
+    def draw_overlays(self, painter, w, h, price_pane_h, vol_pane_h, df):
+        # NOTE: QPainter origin (0,0) is TOP-LEFT.
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        width = self.width()
-        height = self.height()
-        
-        # --- Draw Date Display ---
-        if not visible_df.empty:
-            local_timestamp = visible_df['t'].iloc[0].tz_convert('America/New_York')
-            date_str = local_timestamp.strftime('%Y-%m-%d')
-            painter.setFont(QFont('monospace', 10))
-            painter.setPen(QPen(QColor(150, 150, 150)))
-            painter.drawText(10, 20, date_str)
+        # --- Pre-calculate ranges ---
+        min_price_actual = df['l'].min(); max_price_actual = df['h'].max()
+        center_price = (min_price_actual + max_price_actual) / 2
+        display_range = (max_price_actual - min_price_actual) * self.zoom_factor if (max_price_actual - min_price_actual) > 0 else 1
+        view_min_price = center_price - display_range / 2; view_price_range = display_range
+        max_volume = df['v'].max() if not df['v'].empty else 1
 
-        # --- Draw Price Axis ---
-        num_price_lines = 10
-        price_step = price_range / num_price_lines
+        # FIX: Draw the separator in the middle of the gap, not on an edge
+        separator_y = price_pane_h + self.pane_separator_height // 2
+        painter.setPen(QPen(self.separator_color, 1))
+        painter.drawLine(0, separator_y, w, separator_y)
+
+        # --- Draw Price Axis (in top pane) ---
+        num_price_lines = 8
         for i in range(num_price_lines + 1):
-            price = min_price + i * price_step
-            y = height - int((price - min_price) / price_range * height)
-            
-            painter.setPen(QPen(QColor(60, 60, 60), 1))
-            painter.drawLine(0, y, width, y)
-            
-            painter.setFont(QFont('monospace', 9))
-            painter.setPen(QPen(QColor(200, 200, 200), 1))
-            painter.drawText(width - 75, y + 4, 70, 20, Qt.AlignmentFlag.AlignRight, f"{price:.2f}")
-            
-        # --- Draw Time Axis and Day Separators ---
-        if visible_df.empty: return
-        
+            price = view_min_price + (i / num_price_lines) * view_price_range
+            y = price_pane_h - int(((price - view_min_price) / view_price_range) * price_pane_h)
+            painter.setPen(QPen(self.separator_color, 1, Qt.PenStyle.DotLine))
+            painter.drawLine(0, y, w, y)
+            painter.setFont(QFont('monospace', 9)); painter.setPen(QPen(QColor(200, 200, 200)))
+            painter.drawText(w - 75, y - 4, 70, 20, Qt.AlignmentFlag.AlignRight, f"{price:.2f}")
+
+        # --- Draw Volume Axis (in bottom pane) ---
+        num_vol_lines = 2
+        for i in range(num_vol_lines + 1):
+            vol = (i / num_vol_lines) * max_volume
+            y = h - int((vol / (max_volume * 1.05)) * vol_pane_h)
+            painter.setPen(QPen(self.separator_color, 1, Qt.PenStyle.DotLine))
+            painter.drawLine(0, y, w, y)
+            painter.setFont(QFont('monospace', 9)); painter.setPen(QPen(QColor(200, 200, 200)))
+            if vol > 1_000_000: vol_str = f"{vol/1_000_000:.2f}M"
+            elif vol > 1_000: vol_str = f"{vol/1_000:.1f}k"
+            else: vol_str = str(int(vol))
+            painter.drawText(w - 75, y - 12, 70, 20, Qt.AlignmentFlag.AlignRight, vol_str)
+
+        # --- Draw Date Display, Time Axis, and Day Separators ---
+        first_timestamp_local = df['t'].iloc[0].tz_convert('America/New_York')
+        date_str = first_timestamp_local.strftime('%Y-%m-%d')
+        painter.setFont(QFont('monospace', 10)); painter.setPen(QPen(QColor(200, 200, 200)))
+        painter.drawText(10, 15, date_str)
         num_time_labels = 10
         bar_step = max(1, self.visible_bars // num_time_labels)
         last_date = None
-        
-        for i, (index, row) in enumerate(visible_df.iterrows()):
+        for i, (index, row) in enumerate(df.iterrows()):
             local_timestamp = row['t'].tz_convert('America/New_York')
+            x = int((i / self.visible_bars) * w)
             current_date = local_timestamp.date()
-
-            # NEW: Draw day separator line
             if last_date is not None and current_date != last_date:
-                x = int((i / self.visible_bars) * width)
                 pen = QPen(self.separator_color, 1, Qt.PenStyle.DashLine)
                 painter.setPen(pen)
-                painter.drawLine(x, 0, x, height - 30) # Leave space for time labels
-            
+                painter.drawLine(x, 0, x, h - 30)
             last_date = current_date
-            
-            # Draw time labels at intervals
             if i % bar_step == 0:
-                x = int((i / self.visible_bars) * width)
                 time_str = local_timestamp.strftime('%H:%M')
-                painter.setPen(QPen(QColor(200, 200, 200)))
-                painter.drawText(x - 50, height - 25, 100, 20, Qt.AlignmentFlag.AlignCenter, time_str)
+                painter.drawText(x - 50, h - 25, 100, 20, Qt.AlignmentFlag.AlignCenter, time_str)
