@@ -1,6 +1,6 @@
 from PyQt6.QtGui import (QPainter, QPen, QColor, QFont, QBrush, 
                          QLinearGradient)
-from PyQt6.QtCore import Qt, QRectF, QPoint, QRect
+from PyQt6.QtCore import Qt, QRectF, QPointF, QRect
 from OpenGL.GL import *
 from OpenGL.arrays import vbo
 import pandas as pd
@@ -363,8 +363,95 @@ class OverlayRenderer:
         painter.drawText(QRectF(15, 5, 500, 30), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, state.symbol_text)
 
     def _draw_drag_selection(self, painter: QPainter, state: ChartState, w: int, h: int):
-        """Placeholder for drawing a selection rectangle during a mouse drag."""
-        pass # To be implemented
+        """
+        Draws a selection rectangle and a detailed info box with time and price changes.
+        """
+        if not state.drag_start_pos or not state.drag_end_pos:
+            return
+
+        # 1. Define and draw the main selection rectangle (dashed box)
+        selection_rect = QRectF(QPointF(state.drag_start_pos), QPointF(state.drag_end_pos)).normalized()
+        painter.save()
+        painter.setBrush(QColor(100, 125, 150, 40))  # Semi-transparent blue fill for the area
+        painter.setPen(QPen(QColor(150, 180, 220, 150), 1, Qt.PenStyle.DashLine))
+        painter.drawRect(selection_rect)
+        painter.restore()
+
+        # 2. Convert pixel coordinates to data indices
+        if state.df.empty or state.visible_bars == 0:
+            return
+
+        bar_width_px = w / state.visible_bars
+        start_idx = state.start_bar + int(selection_rect.left() / bar_width_px)
+        end_idx = state.start_bar + int(selection_rect.right() / bar_width_px)
+        
+        start_idx = max(0, min(start_idx, len(state.df) - 1))
+        end_idx = max(0, min(end_idx, len(state.df) - 1))
+
+        if start_idx > end_idx:
+            start_idx, end_idx = end_idx, start_idx
+
+        # 3. Get data and perform all calculations
+        start_candle = state.df.iloc[start_idx]
+        end_candle = state.df.iloc[end_idx]
+
+        start_price = start_candle['o']
+        end_price = end_candle['c']
+        start_time = start_candle['t'].to_pydatetime() # Convert to standard python datetime
+        end_time = end_candle['t'].to_pydatetime()
+        
+        price_change = end_price - start_price
+        percent_change = (price_change / start_price) * 100 if start_price > 0 else 0
+        duration = end_time - start_time
+        
+        # Helper to format timedelta into a readable string like "3d 4h 15m"
+        def format_timedelta(td):
+            days, rem = divmod(td.total_seconds(), 86400)
+            hours, rem = divmod(rem, 3600)
+            minutes, _ = divmod(rem, 60)
+            parts = []
+            if days > 0: parts.append(f"{int(days)}d")
+            if hours > 0: parts.append(f"{int(hours)}h")
+            if minutes > 0: parts.append(f"{int(minutes)}m")
+            return " ".join(parts) if parts else "0m"
+
+        # 4. Prepare for drawing the info box
+        painter.save()
+        font = QFont('monospace', 9)
+        painter.setFont(font)
+
+        # Define pens for different text elements
+        label_pen = QPen(QColor(180, 180, 180)) # Light gray for labels
+        value_pen = QPen(Qt.GlobalColor.white)
+        change_pen = QPen(QColor(20, 220, 20)) if price_change >= 0 else QPen(QColor(220, 20, 20))
+
+        # Define the info box geometry
+        info_box_rect = QRectF(selection_rect.left() + 1, selection_rect.top() + 1, 350, 55)
+        painter.setBrush(QColor(40, 40, 40, 220)) # Dark, semi-transparent background
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(info_box_rect, 3, 3)
+
+        # Draw the text line by line for clear formatting
+        line_height = 16
+        x_start_labels = info_box_rect.left() + 10
+        x_start_values = info_box_rect.left() + 75
+        y_pos = info_box_rect.top() + line_height
+        
+        # Line 1: Time Range
+        painter.setPen(label_pen); painter.drawText(QPointF(x_start_labels, y_pos), "Range:")
+        painter.setPen(value_pen); painter.drawText(QPointF(x_start_values, y_pos), f"{start_time.strftime('%b %d, %H:%M')} -> {end_time.strftime('%b %d, %H:%M')} ({format_timedelta(duration)})")
+        y_pos += line_height
+
+        # Line 2: Price Change
+        painter.setPen(label_pen); painter.drawText(QPointF(x_start_labels, y_pos), "Change:")
+        painter.setPen(change_pen); painter.drawText(QPointF(x_start_values, y_pos), f"{price_change:+.2f}")
+        y_pos += line_height
+        
+        # Line 3: Percent Change
+        painter.setPen(label_pen); painter.drawText(QPointF(x_start_labels, y_pos), "% Chg:")
+        painter.setPen(change_pen); painter.drawText(QPointF(x_start_values, y_pos), f"{percent_change:+.2f}%")
+        
+        painter.restore()
 
     def _draw_crosshair(self, painter: QPainter, state: ChartState, w: int, h: int, price_pane_top_y: int, price_pane_h: int, min_price: float, price_range: float):
         """Draws the vertical and horizontal lines of the crosshair."""
