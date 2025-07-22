@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import timedelta
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QColor, QPainter, QPen, QFont, QBrush, QTextDocument # <-- Import QTextDocument
+from PyQt6.QtGui import QColor, QPainter, QPen, QFont, QBrush, QTextDocument
 from PyQt6.QtCore import Qt, QPoint, pyqtSignal, QRectF, QRect
 from OpenGL.GL import *
 
@@ -31,6 +31,10 @@ class CandleWidget(QOpenGLWidget):
         self.mode = ChartMode.CURSOR; self.is_dragging = False
         self.drag_start_pos = None; self.drag_end_pos = None
 
+        self.is_panning = False
+        self.pan_start_pos = None
+        self.pan_start_bar = 0
+
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
     def set_data(self, dataframe: pd.DataFrame):
@@ -41,27 +45,55 @@ class CandleWidget(QOpenGLWidget):
         self.mode = mode; self.is_dragging = False; self.update()
 
     def mousePressEvent(self, event):
-        if self.mode == ChartMode.CURSOR and event.button() == Qt.MouseButton.LeftButton:
-            # FIX 1: Hide the hover info widget when a drag starts
+        if event.button() == Qt.MouseButton.LeftButton and self.mode == ChartMode.CURSOR:
             self.mouseLeftChart.emit()
-            
-            self.is_dragging = True; self.drag_start_pos = event.position().toPoint()
-            self.drag_end_pos = event.position().toPoint(); self.update()
-        else: super().mousePressEvent(event)
+            self.is_dragging = True
+            self.drag_start_pos = event.position().toPoint()
+            self.drag_end_pos = event.position().toPoint()
+            self.update()
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.is_panning = True
+            self.pan_start_pos = event.position().toPoint()
+            self.pan_start_bar = self.start_bar
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        else:
+            super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self.mode == ChartMode.CURSOR and event.button() == Qt.MouseButton.LeftButton:
-            self.is_dragging = False; self.drag_start_pos = None
-            self.drag_end_pos = None; self.update()
-        else: super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton and self.is_dragging:
+            self.is_dragging = False
+            self.drag_start_pos = None
+            self.drag_end_pos = None
+            self.update()
+        elif event.button() == Qt.MouseButton.RightButton and self.is_panning:
+            self.is_panning = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        else:
+            super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
         self.mouse_pos = event.position().toPoint()
+        
+        if self.is_panning:
+            if self.df.empty: return
+            delta_x = self.mouse_pos.x() - self.pan_start_pos.x()
+            bar_width = self.width() / self.visible_bars
+            bar_delta = delta_x / bar_width
+            
+            new_start_bar = self.pan_start_bar - int(bar_delta)
+            
+            max_start_bar = max(0, len(self.df) - self.visible_bars)
+            self.start_bar = max(0, min(new_start_bar, max_start_bar))
+            
+            self.update()
+            return
+
         if self.is_dragging:
             self.drag_end_pos = self.mouse_pos; self.update(); return
+        
         if self.df.empty: return
         bar_width = self.width() / self.visible_bars
-        hover_index_in_view = int(event.position().x() / bar_width)
+        hover_index_in_view = int(self.mouse_pos.x() / bar_width)
         actual_index = self.start_bar + hover_index_in_view
         if actual_index >= len(self.df): actual_index = -1
         if actual_index != self.last_hovered_index:
@@ -70,22 +102,73 @@ class CandleWidget(QOpenGLWidget):
             else: self.mouseLeftChart.emit()
         self.update()
 
-    # (Other core methods remain unchanged)
+    def wheelEvent(self, event):
+        if self.df.empty:
+            super().wheelEvent(event)
+            return
+
+        delta = event.angleDelta().y()
+        if delta > 0: zoom_factor = 0.85
+        else: zoom_factor = 1.15
+
+        mouse_x = event.position().x()
+        bar_width = self.width() / self.visible_bars
+        
+        index_under_mouse = self.start_bar + int(mouse_x / bar_width)
+
+        old_visible_bars = self.visible_bars
+        new_visible_bars = int(old_visible_bars * zoom_factor)
+        new_visible_bars = max(10, min(len(self.df), new_visible_bars))
+
+        if new_visible_bars == old_visible_bars: return
+        self.visible_bars = new_visible_bars
+
+        mouse_x_ratio = mouse_x / self.width()
+        new_start_bar_offset = int(self.visible_bars * mouse_x_ratio)
+        new_start_bar = index_under_mouse - new_start_bar_offset
+        
+        max_start_bar = max(0, len(self.df) - self.visible_bars)
+        self.start_bar = max(0, min(new_start_bar, max_start_bar))
+
+        self.update()
+        event.accept()
+
+    # --- MODIFIED: keyPressEvent with Up/Down arrow logic restored ---
     def keyPressEvent(self, event):
         if self.df.empty: super().keyPressEvent(event); return
         max_start_bar = max(0, len(self.df) - self.visible_bars)
-        if event.key() == Qt.Key.Key_Right: self.start_bar = min(self.start_bar + self.scroll_speed, max_start_bar)
-        elif event.key() == Qt.Key.Key_Left: self.start_bar = max(0, self.start_bar - self.scroll_speed)
-        elif event.key() == Qt.Key.Key_Plus or event.key() == Qt.Key.Key_Equal: self.zoom_factor *= 0.9
-        elif event.key() == Qt.Key.Key_Minus: self.zoom_factor *= 1.1
+
+        if event.key() == Qt.Key.Key_Right:
+            self.start_bar = min(self.start_bar + self.scroll_speed, max_start_bar)
+        elif event.key() == Qt.Key.Key_Left:
+            self.start_bar = max(0, self.start_bar - self.scroll_speed)
+        
+        # --- THIS LOGIC HAS BEEN RESTORED ---
         elif event.key() == Qt.Key.Key_Up or event.key() == Qt.Key.Key_Down:
             center_bar_index = self.start_bar + self.visible_bars // 2
-            if event.key() == Qt.Key.Key_Up: new_visible_bars = max(10, int(self.visible_bars * 0.8))
-            else: new_visible_bars = min(len(self.df), int(self.visible_bars * 1.2))
-            self.visible_bars = new_visible_bars; new_start_bar = max(0, center_bar_index - self.visible_bars // 2)
-            new_max_start_bar = max(0, len(self.df) - self.visible_bars); self.start_bar = min(new_start_bar, new_max_start_bar)
-        else: super().keyPressEvent(event); return
+            if event.key() == Qt.Key.Key_Up:
+                new_visible_bars = max(10, int(self.visible_bars * 0.8)) # Zoom in
+            else: # Key_Down
+                new_visible_bars = min(len(self.df), int(self.visible_bars * 1.2)) # Zoom out
+            
+            # Recalculate start_bar to keep the center fixed
+            self.visible_bars = new_visible_bars
+            new_start_bar = max(0, center_bar_index - self.visible_bars // 2)
+            new_max_start_bar = max(0, len(self.df) - self.visible_bars)
+            self.start_bar = min(new_start_bar, new_max_start_bar)
+        # --- END OF RESTORED LOGIC ---
+
+        elif event.key() == Qt.Key.Key_Plus or event.key() == Qt.Key.Key_Equal:
+            self.zoom_factor *= 0.9 # This adjusts vertical zoom, which is different
+        elif event.key() == Qt.Key.Key_Minus:
+            self.zoom_factor *= 1.1 # This adjusts vertical zoom
+        
+        else:
+            super().keyPressEvent(event)
+            return
+            
         self.update()
+
     def leaveEvent(self, event):
         self.last_hovered_index = -1; self.mouse_pos = None; self.mouseLeftChart.emit(); self.update(); super().leaveEvent(event)
     def initializeGL(self): pass
@@ -93,13 +176,19 @@ class CandleWidget(QOpenGLWidget):
     def paintGL(self):
         glClearColor(self.bg_color.redF(), self.bg_color.greenF(), self.bg_color.blueF(), 1.0); glClear(GL_COLOR_BUFFER_BIT)
         if self.df.empty: return
+        
+        max_start_bar = max(0, len(self.df) - self.visible_bars)
+        self.start_bar = max(0, min(self.start_bar, max_start_bar))
+        
         visible_df = self.df.iloc[self.start_bar : self.start_bar + self.visible_bars]
         if visible_df.empty: return
+
         w = self.width(); h = self.height()
         volume_pane_height = int(h * self.volume_pane_ratio); price_pane_height = h - volume_pane_height - self.pane_separator_height
         price_pane_y_offset = volume_pane_height + self.pane_separator_height
         self.draw_price_pane(w, price_pane_height, price_pane_y_offset, visible_df); self.draw_volume_pane(w, volume_pane_height, visible_df)
         painter = QPainter(self); self.draw_overlays(painter, w, h, price_pane_height, volume_pane_height, visible_df); painter.end()
+
     def draw_price_pane(self, w, pane_h, pane_y, df):
         glEnable(GL_SCISSOR_TEST); glScissor(0, pane_y, w, pane_h); glViewport(0, pane_y, w, pane_h)
         min_price_actual=df['l'].min(); max_price_actual=df['h'].max(); center_price=(min_price_actual+max_price_actual)/2
@@ -158,13 +247,11 @@ class CandleWidget(QOpenGLWidget):
                         <b>{num_bars} bars</b> ({time_range_str})<br>
                         Change: <span style='color: {change_color.name()}; font-weight: bold;'>{price_change_str} {percent_change_str}</span>
                         </div>"""
-
-        # FIX 2: Use QTextDocument for robust rich text rendering
         painter.save()
         doc = QTextDocument()
         doc.setHtml(info_html)
         doc.setTextWidth(300)
-        doc.setDefaultFont(painter.font()) # Use the painter's current font settings
+        doc.setDefaultFont(painter.font())
 
         info_box_size = doc.size()
         info_box_pos = self.drag_end_pos + QPoint(15, 15)
@@ -177,7 +264,6 @@ class CandleWidget(QOpenGLWidget):
         doc.drawContents(painter)
         painter.restore()
 
-    # (All other helper/drawing methods remain unchanged)
     def get_price_range(self, df):
         min_price_actual=df['l'].min(); max_price_actual=df['h'].max(); center_price=(min_price_actual+max_price_actual)/2
         display_range=(max_price_actual-min_price_actual)*self.zoom_factor if (max_price_actual-min_price_actual)>0 else 1
