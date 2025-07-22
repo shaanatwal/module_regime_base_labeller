@@ -6,7 +6,7 @@ This is an open-source tool, built by a developer for developers. It's designed 
 
 <p align="center">
   <!-- 🚀 YOUR NAVIGATION GIF LINK GOES HERE -->
-  <img src="https://i.imgur.com/WUc6M7G.gif" alt="Chart Navigation Demo" width="800">
+  <img src="https://i.imgur.com/bt7Ppre.gif" alt="Chart Navigation Demo" width="800">
 </p>
 
 ---
